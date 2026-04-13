@@ -1,6 +1,7 @@
 package main
 
 import (
+	memory "AmiyaAgent/internal/component"
 	"bufio"
 	"context"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
@@ -133,8 +135,8 @@ func main() {
     if err != nil {
         log.Println("未找到 .env 文件，使用系统环境变量")
     }
-	apiKey,baseURL,modelName := os.Getenv("OPENAI_API_KEY"),os.Getenv("OPENAI_BASE_URL"),os.Getenv("OPENAI_MODEL_NAME")
-	if apiKey == "" || baseURL == "" || modelName == "" {
+	apiKey,baseURL,modelName,sessionDir := os.Getenv("OPENAI_API_KEY"),os.Getenv("OPENAI_BASE_URL"),os.Getenv("OPENAI_MODEL_NAME"),os.Getenv("SESSION_DIR")
+	if apiKey == "" || baseURL == "" || modelName == "" || sessionDir == "" {
 		log.Fatal("请设置环境变量")
 	}
 
@@ -164,19 +166,45 @@ func main() {
 	if err != nil {
 		log.Fatal("创建 ChatModelAgent 实例失败:", err)
 	}
+	log.Println("ChatModelAgent 实例创建成功")
 
 	// 创建agentRunner实例
 	runner := adk.NewRunner(ctx,adk.RunnerConfig{
 		Agent: agent,
 		EnableStreaming: true,
 	})
+	log.Println("AgentRunner 实例创建成功")
 	
-	// 初始化对话历史和系统消息（Eino会自动把Agent的Instruction注入为System Message）
-	messages := make([]*schema.Message, 0, 16)
+	// 创建会话存储
+	store, err := memory.NewStore(sessionDir)
+	if err != nil {
+		log.Fatal("创建会话存储失败:", err)
+	}
+	log.Println("会话存储创建成功")
+	
+	var sessionID string
+	fmt.Print("请输入会话ID（留空则创建新会话）: ")
+	fmt.Scanln(&sessionID)
+
+	// 处理会话 ID
+	if sessionID == "" { // 如果为空，生成新 UUID
+		sessionID = uuid.New().String()
+		fmt.Printf("创建新会话: %s\n", sessionID)
+	} else {
+		fmt.Printf("恢复会话: %s\n", sessionID)
+	}
+
+	// 获取或创建会话
+	session, err := store.GetSession(sessionID)
+	if err != nil {
+		log.Fatal("获取或创建会话失败:", err)
+	}
+	log.Println("会话获取或创建成功")
+
 
 	// 启动对话
 	fmt.Println()
-	fmt.Println("===============================================开始对话=======================================================")
+	fmt.Println("===============================================开始对话（当前会话标题：" + session.GetTitle() + "）=======================================================")
 	fmt.Println()
 	fmt.Println("阿米娅: 博士，您好！我是阿米娅，有什么需要我帮忙的吗？")
 	fmt.Println()
@@ -197,10 +225,18 @@ func main() {
 			continue
 		}
 
-		// 将用户消息加入对话历史
-		messages = append(messages, schema.UserMessage(input))
+		// 创建用户消息
+		userMsg := schema.UserMessage(input)
+		if err := session.Append(userMsg); err != nil { // 将消息保存到会话
+			log.Println("保存用户消息失败:", err)
+			continue
+		}
+
+		// 获取当前会话的消息历史
+		messages := session.GetMessages()
 
 		// 调用 AgentRunner 生成回复
+		fmt.Print("阿米娅：")
 		events := runner.Run(ctx, messages)
 		content,err := getAssistantMsg(events)
 		if err != nil {
@@ -211,7 +247,11 @@ func main() {
 		}
 
 		// 将模型回复加入对话历史
-		messages = append(messages, schema.AssistantMessage(content,nil))
+		err = session.Append(schema.AssistantMessage(content,nil))
+		if err != nil {
+			log.Println("保存助手消息失败:", err)
+			continue
+		}
 
 		fmt.Println()
 	}
@@ -219,6 +259,8 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	fmt.Printf("\n\n会话已保存，会话ID：%s\n", sessionID)
 }
 
 func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error) {
