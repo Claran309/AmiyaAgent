@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,7 +80,7 @@ func (s *Session) Append(msg *schema.Message) error {
 	}
 	defer file.Close()
 
-	_, err = file.Write(data)
+	_, err = file.Write(append(data, '\n'))
 	if err != nil {
 		return err
 	}
@@ -154,6 +155,7 @@ func (s *Store) GetSession(id string) (*Session, error) {
 
 	var session *Session
 	if _, exists := os.Stat(filepath);os.IsNotExist(exists){ // 如果文件不存在，创建新会话
+		log.Printf("会话文件不存在，创建新会话: %s\n", filepath)
 		header := SessionHeader{
 			Type:      "session",
 			ID:        id,
@@ -175,6 +177,7 @@ func (s *Store) GetSession(id string) (*Session, error) {
 			messages:  make([]*schema.Message, 0),
 		}
 	}else { // 从磁盘加载会话
+		log.Printf("会话文件存在，加载会话: %s\n", filepath)
 		file, err := os.Open(filepath)
 		if err != nil {
 			return nil, err
@@ -204,13 +207,26 @@ func (s *Store) GetSession(id string) (*Session, error) {
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
+				log.Printf("跳过空行\n")
 				continue
 			}
 			var msg schema.Message
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				log.Printf("解析消息失败，跳过该消息: %s, error: %v\n", line, err)
 				continue
 			}
 			session.messages = append(session.messages, &msg)
+
+			// debug日志，显示加载的消息内容（如果消息过长，则截断显示）
+			contentRune := []rune(msg.Content)
+			displayContent := string(contentRune)
+			if len(contentRune) > 50 {
+				displayContent = string(contentRune[:50]) + "..."
+			}
+			
+			displayContent = strings.ReplaceAll(displayContent, "\n", " ")
+			
+			log.Printf("加载历史消息成功: role=%s, content=[%s]\n", msg.Role, displayContent)
 		}
 	}
 
