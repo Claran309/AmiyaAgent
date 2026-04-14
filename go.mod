@@ -8,7 +8,12 @@ require (
 	github.com/joho/godotenv v1.5.1
 )
 
-require github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
+require (
+	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
+	golang.org/x/text v0.20.0 // indirect
+)
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -42,4 +47,5 @@ require (
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gorm.io/gorm v1.31.1
 )
