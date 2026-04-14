@@ -3,16 +3,24 @@ package main
 import (
 	memory "AmiyaAgent/internal/component"
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/components/tool/utils"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -20,9 +28,9 @@ import (
 
 const (
 	AmiyaName = "Amiya"
-	
+
 	AmiyaDescription = "明日方舟世界观里罗德岛制药公司的领导人，博士最信赖的助手。一名温柔认真的卡特斯(兔子亚人种族)，负责指挥行动、协调各部门，并可以查询干员信息、查看资源状况、制定作战计划。"
-	
+
 	AmiyaInstruction = `你是阿米娅（Amiya），明日方舟世界观里罗德岛制药公司的领导人之一，也是博士最信赖的助手。
 
 ## 你的身份背景
@@ -42,89 +50,92 @@ const (
 - 常用语气词："嗯"、"那个"、"请"
 - 经常说"博士，请多休息"之类的关心话
 - 汇报工作时会很专业，但日常对话时会展现可爱的一面
-- 不会过度卖萌，保持一定的成熟感`
+- 不会过度卖萌，保持一定的成熟感
+`
 )
 
-// type OperatorQueryInput struct{
-// 	Name string `json:"name" jsonschema:"description=干员名称，如'能天使'、'银灰'等"`
-// }
+type OperatorQueryToolParams struct {
+	Name string `json:"name" jsonschema:"description=干员名称，如'能天使'、'银灰'等"`
+}
 
-// func queryOperator(ctx context.Context, input *OperatorQueryInput) (string, error){
-// 	// 模拟干员数据库
-// 	operators := map[string]string{
-// 		"能天使": "【能天使】★★★★★★ | 职业：狙击 | 特长：对空攻击，高射速 | 天赋：攻击速度提升",
-// 		"银灰":  "【银灰】★★★★★★ | 职业：近卫 | 特长：远程斩击 | 天赋：再部署时间缩短",
-// 		"陈":   "【陈】★★★★★★ | 职业：近卫 | 特长：多段爆发攻击 | 天赋：技力恢复速度提升",
-// 		"艾雅法拉": "【艾雅法拉】★★★★★★ | 职业：术师 | 特长：群体法术伤害 | 天赋：法术伤害提升",
-// 		"阿米娅": "【阿米娅】★★★★★★ | 职业：术师/近卫 | 特长：真实伤害 | 天赋：每次攻击回复技力",
-// 		"德克萨斯": "【德克萨斯】★★★★★ | 职业：先锋 | 特长：产生费用，群体眩晕 | 天赋：初始Cost+1",
-// 		"蓝毒":  "【蓝毒】★★★★★ | 职业：狙击 | 特长：多目标攻击，法术dot伤害 | 天赋：攻击附带法术伤害",
-// 	}
+// 查询干员信息伪逻辑
+func queryOperator(ctx context.Context, input *OperatorQueryToolParams) (string, error) {
+	operators := map[string]string{
+		"能天使":  "【能天使】★★★★★★ | 职业：狙击 | 特长：对空攻击，高射速 | 天赋：攻击速度提升",
+		"银灰":   "【银灰】★★★★★★ | 职业：近卫 | 特长：远程斩击 | 天赋：再部署时间缩短",
+		"陈":    "【陈】★★★★★★ | 职业：近卫 | 特长：多段爆发攻击 | 天赋：技力恢复速度提升",
+		"艾雅法拉": "【艾雅法拉】★★★★★★ | 职业：术师 | 特长：群体法术伤害 | 天赋：法术伤害提升",
+		"阿米娅":  "【阿米娅】★★★★★★ | 职业：术师/近卫 | 特长：真实伤害 | 天赋：每次攻击回复技力",
+		"德克萨斯": "【德克萨斯】★★★★★ | 职业：先锋 | 特长：产生费用，群体眩晕 | 天赋：初始Cost+1",
+		"蓝毒":   "【蓝毒】★★★★★ | 职业：狙击 | 特长：多目标攻击，法术dot伤害 | 天赋：攻击附带法术伤害",
+	}
 
-// 	info, ofk := operators[input.Name]
-// 	if !ofk {
-// 		return fmt.Sprintf("未找到名为'%s'的干员记录", input.Name), nil
-// 	}
+	info, ofk := operators[input.Name]
+	if !ofk {
+		return fmt.Sprintf("未找到名为'%s'的干员记录", input.Name), nil
+	}
 
-// 	return info, nil
-// }
+	return info, nil
+}
 
-// type ResourceQueryInpout struct{
-// 	ResourceType string `json:"resource_type" jsonschema:"description=资源类型，可选值：龙门币、合成玉、理智、源石、全部"`
-// }
+type ResourceQueryToolParams struct {
+	ResourceType string `json:"resource_type" jsonschema:"description=资源类型，可选值：龙门币、合成玉、理智、源石、全部"`
+}
 
-// func queryResources(ctx context.Context, input *ResourceQueryInpout) (string, error){
-// 	resources := map[string]string{
-// 		"龙门币": "龙门币: 1,234,567",
-// 		"合成玉": "合成玉: 8,900",
-// 		"理智":  "理智: 130/135（将在 2 小时后回满）",
-// 		"源石":  "源石: 42 个",
-// 	}
+// 查询资源状况伪逻辑
+func queryResources(ctx context.Context, input *ResourceQueryToolParams) (string, error) {
+	resources := map[string]string{
+		"龙门币": "龙门币: 1,234,567",
+		"合成玉": "合成玉: 8,900",
+		"理智":  "理智: 130/135（将在 2 小时后回满）",
+		"源石":  "源石: 42 个",
+	}
 
-// 	if input.ResourceType == "全部" || input.ResourceType == "" {
-// 		var result strings.Builder
-// 		result.WriteString("=== 罗德岛资源报告 ===\n")
-// 		for _, v := range resources {
-// 			result.WriteString("  " + v + "\n")
-// 		}
-// 		result.WriteString("报告时间：刚刚更新")
-// 		return result.String(), nil
-// 	}
+	if input.ResourceType == "全部" || input.ResourceType == "" {
+		var result strings.Builder
+		result.WriteString("=== 罗德岛资源报告 ===\n")
+		for _, v := range resources {
+			result.WriteString("  " + v + "\n")
+		}
+		result.WriteString("报告时间：刚刚更新")
+		return result.String(), nil
+	}
 
-// 	info, ok := resources[input.ResourceType]
-// 	if !ok {
-// 		return fmt.Sprintf("未知的资源类型: '%s'。支持查询：龙门币、合成玉、理智、源石、全部", input.ResourceType), nil
-// 	}
+	info, ok := resources[input.ResourceType]
+	if !ok {
+		return fmt.Sprintf("未知的资源类型: '%s'。支持查询：龙门币、合成玉、理智、源石、全部", input.ResourceType), nil
+	}
 
-// 	return info, nil
-// }
+	return info, nil
+}
 
-// type BattlePlanInput struct {
-// 	StageName  string `json:"stage_name" jsonschema:"description=关卡名称，如'1-7'、'CE-5'、'SK-5'等"`
-// 	Difficulty string `json:"difficulty" jsonschema:"description=难度偏好，可选值：标准、挑战"`
-// }
+type BattlePlanToolParams struct {
+	StageName  string `json:"stage_name" jsonschema:"description=关卡名称，如'1-7'、'CE-5'、'SK-5'等"`
+	Difficulty string `json:"difficulty" jsonschema:"description=难度偏好，可选值：标准、挑战"`
+}
 
-// func makeBattlePlan(ctx context.Context, input *BattlePlanInput) (string, error) {
-// 	plan := fmt.Sprintf(`=== 作战计划：%s（%s模式）===
-// 推荐编队：
-//   先锋位：德克萨斯 — 快速获取部署费用
-//   狙击位：能天使 — 对空防御 + 高DPS
-//   近卫位：银灰 — 核心输出，关键时刻真银斩
-//   术师位：艾雅法拉 — 群体法术清场
-//   医疗位：闪灵 — 全队治疗保障
-//   重装位：星熊 — 前排抗压
+// 制定作战计划伪逻辑
+func makeBattlePlan(ctx context.Context, input *BattlePlanToolParams) (string, error) {
+	plan := fmt.Sprintf(`=== 作战计划：%s（%s模式）===
+推荐编队：
+  先锋位：德克萨斯 — 快速获取部署费用
+  狙击位：能天使 — 对空防御 + 高DPS
+  近卫位：银灰 — 核心输出，关键时刻真银斩
+  术师位：艾雅法拉 — 群体法术清场
+  医疗位：闪灵 — 全队治疗保障
+  重装位：星熊 — 前排抗压
 
-// 作战要点：
-//   1. 开局立即部署德克萨斯获取初始费用
-//   2. 优先在高台部署能天使控制空中威胁
-//   3. 银灰部署在关键路口，技能 3 留到敌方精英出现时使用
-//   4. 艾雅法拉在敌方密集时释放火山，最大化群伤
+作战要点：
+  1. 开局立即部署德克萨斯获取初始费用
+  2. 优先在高台部署能天使控制空中威胁
+  3. 银灰部署在关键路口，技能 3 留到敌方精英出现时使用
+  4. 艾雅法拉在敌方密集时释放火山，最大化群伤
 
-// 预估理智消耗：%d
-// 预估通关概率：%s`, input.StageName, input.Difficulty, 30, "95%")
+预估理智消耗：%d
+预估通关概率：%s`, input.StageName, input.Difficulty, 30, "95%")
 
-// 	return plan, nil
-// }
+	return plan, nil
+}
 
 func main() {
 	// 初始化上下文
@@ -132,56 +143,97 @@ func main() {
 
 	// 获取apiKey等环境变量并封装为config
 	err := godotenv.Load()
-    if err != nil {
-        log.Println("未找到 .env 文件，使用系统环境变量")
-    }
-	apiKey,baseURL,modelName,sessionDir := os.Getenv("OPENAI_API_KEY"),os.Getenv("OPENAI_BASE_URL"),os.Getenv("OPENAI_MODEL_NAME"),os.Getenv("SESSION_DIR")
-	if apiKey == "" || baseURL == "" || modelName == "" || sessionDir == "" {
+	if err != nil {
+		log.Println("未找到 .env 文件，使用系统环境变量")
+	}
+	apiKey, baseURL, modelName, sessionDir,agentRoot := os.Getenv("OPENAI_API_KEY"), os.Getenv("OPENAI_BASE_URL"), os.Getenv("OPENAI_MODEL_NAME"), os.Getenv("SESSION_DIR"), os.Getenv("AGENT_ROOT")
+	if apiKey == "" || baseURL == "" || modelName == "" || sessionDir == "" || agentRoot == "" {
 		log.Fatal("请设置环境变量")
 	}
 
-
 	// 创建 ChatModel 实例
 	modelConfig := &openai.ChatModelConfig{
-		Model:  modelName,
-		APIKey: apiKey,
+		Model:   modelName,
+		APIKey:  apiKey,
 		BaseURL: baseURL,
 	}
 
-	chatModel, err := openai.NewChatModel(ctx,modelConfig)
+	chatModel, err := openai.NewChatModel(ctx, modelConfig)
 	if err != nil {
 		log.Fatal("创建 ChatModel 实例失败:", err)
 	}
 	log.Println("ChatModel 实例创建成功")
 
-	// 创建Agent实例
-	agentConfig := &adk.ChatModelAgentConfig{
-		Name: AmiyaName,
-		Description: AmiyaDescription,
-		Instruction: AmiyaInstruction,
-		Model: chatModel,
+	// 获取Agent绝对路径
+	if abs, err := filepath.Abs(agentRoot); err == nil {
+		agentRoot = abs
+	}
+	extInstruction := fmt.Sprintf(`## 文件管理操作说明
+- 重要提示：在使用文件系统工具（如 ls、read_file、glob、grep 等）时，你必须使用绝对路径。
+- 项目根目录为：%s
+- 当博士要求列出“当前目录”中的文件时，请使用路径：%s
+- 当博士要求使用相对路径读取文件时，请通过在前置加上 %s 将其转换为绝对路径。
+- 示例：如果博士说“读取 main.go”，你应该调用 read_file 工具，并将 file_path 参数设为："%s/main.go")`, agentRoot, agentRoot, agentRoot, agentRoot)
+
+	// 创建LocalBackend Tools 后端工具实例
+	backend, err := local.NewBackend(ctx, &local.Config{})
+	if err != nil {
+		log.Fatal("创建 LocalBackend 实例失败:", err)
+	}
+	log.Println("LocalBackend 实例创建成功")
+
+	// 创建自定义工具集
+	tools := initTools()
+	toolsConfig := adk.ToolsConfig{
+		ToolsNodeConfig: compose.ToolsNodeConfig{
+			Tools: tools,
+		},
 	}
 
-	agent,err := adk.NewChatModelAgent(ctx,agentConfig)
-	if err != nil {
-		log.Fatal("创建 ChatModelAgent 实例失败:", err)
+	// 创建ChatModelAgent类型的Agent实例
+	// agentConfig := &adk.ChatModelAgentConfig{
+	// 	Name: AmiyaName,
+	// 	Description: AmiyaDescription,
+	// 	Instruction: AmiyaInstruction,
+	// 	Model: chatModel,
+	// }
+	// agent,err := adk.NewChatModelAgent(ctx,agentConfig)
+	// if err != nil {
+	// 	log.Fatal("创建 ChatModelAgent 实例失败:", err)
+	// }
+	// log.Println("ChatModelAgent 实例创建成功")
+
+	// 创建DeepAgent类型的Agent实例
+	agentConfig := &deep.Config{
+		Name:           AmiyaName,
+		Description:    AmiyaDescription,
+		Instruction:    AmiyaInstruction + "\n\n" + extInstruction, // 将文件操作说明添加到系统提示词中
+		ChatModel:      chatModel,
+		ToolsConfig:    toolsConfig,
+		Backend:        backend, // 注入LocalBackend工具集
+		StreamingShell: backend, // 支持流式 Shell 输出
+		MaxIteration:   50,      // 最大思考/工具调用循环次数
 	}
-	log.Println("ChatModelAgent 实例创建成功")
+	agent, err := deep.New(ctx, agentConfig)
+	if err != nil {
+		log.Fatal("创建 DeepAgent 实例失败:", err)
+	}
+	log.Println("DeepAgent 实例创建成功")
 
 	// 创建agentRunner实例
-	runner := adk.NewRunner(ctx,adk.RunnerConfig{
-		Agent: agent,
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           agent,
 		EnableStreaming: true,
 	})
 	log.Println("AgentRunner 实例创建成功")
-	
+
 	// 创建会话存储
 	store, err := memory.NewStore(sessionDir)
 	if err != nil {
 		log.Fatal("创建会话存储失败:", err)
 	}
 	log.Println("会话存储创建成功")
-	
+
 	var sessionID string
 	fmt.Print("请输入会话ID（留空则创建新会话）: ")
 	fmt.Scanln(&sessionID)
@@ -201,7 +253,6 @@ func main() {
 	}
 	log.Println("会话获取或创建成功")
 
-
 	// 启动对话
 	fmt.Println()
 	fmt.Println("===============================================开始对话（当前会话标题：" + session.GetTitle() + "）=======================================================")
@@ -212,7 +263,7 @@ func main() {
 	//log.Println("")
 
 	scanner := bufio.NewScanner(os.Stdin)
-	for{
+	for {
 		fmt.Print("博士：")
 		if !scanner.Scan() {
 			break
@@ -225,7 +276,7 @@ func main() {
 			continue
 		}
 
-		// 创建用户消息
+		// 封装用户消息
 		userMsg := schema.UserMessage(input)
 		if err := session.Append(userMsg); err != nil { // 将消息保存到会话
 			log.Println("保存用户消息失败:", err)
@@ -238,7 +289,7 @@ func main() {
 		// 调用 AgentRunner 生成回复
 		fmt.Print("阿米娅：")
 		events := runner.Run(ctx, messages)
-		content,err := getAssistantMsg(events)
+		content, err := getAssistantMsg(events)
 		if err != nil {
 			log.Println("生成回复失败:", err)
 			// 回滚消息历史
@@ -247,7 +298,7 @@ func main() {
 		}
 
 		// 将模型回复加入对话历史
-		err = session.Append(schema.AssistantMessage(content,nil))
+		err = session.Append(schema.AssistantMessage(content, nil))
 		if err != nil {
 			log.Println("保存助手消息失败:", err)
 			continue
@@ -288,6 +339,13 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 		// 获取消息输出对象，简化后续代码
 		msg := event.Output.MessageOutput
 
+		// 若本次消息为工具调用结果，则提取工具输出内容并打印（不累积到最终回复中）
+		if msg.Role == schema.Tool {
+			content := getToolMsg(msg)
+			fmt.Printf("[调用工具结果] %s\n", truncate(content, 200))
+			continue
+		}
+
 		// 只处理Assistant消息
 		if msg.Role != schema.Assistant {
 			continue
@@ -297,6 +355,9 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 		if msg.IsStreaming {
 			// 设置消息流为自动关闭模式
 			msg.MessageStream.SetAutomaticClose()
+
+			// 初始化工具收集器
+			var toolCalls []schema.ToolCall
 
 			// 循环接收流中的每一帧数据
 			for {
@@ -313,15 +374,27 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 					return "", err
 				}
 
-				// 检查帧数据是否有效且包含内容
-				if frame != nil && frame.Content != "" {
-					// 将帧内容添加到字符串构建器中
-					builder.WriteString(frame.Content)
-					// 同时将内容实时打印到标准输出（不换行）
-					_, _ = fmt.Fprint(os.Stdout, frame.Content)
+				// 检查帧数据是否有效
+				if frame != nil {
+					// AI正在生成的文字内容
+					if frame.Content != "" {
+						// 将帧内容添加到字符串构建器中
+						builder.WriteString(frame.Content)
+						// 同时将内容实时打印到标准输出（不换行）
+						_, _ = fmt.Fprint(os.Stdout, frame.Content)
+					}
+					// 收集AI想要调用的工具
+					if len(frame.ToolCalls) > 0 {
+						toolCalls = append(toolCalls, frame.ToolCalls...)
+					}
 				}
 			}
-
+			// 打印工具调用信息
+			for _, toolCall := range toolCalls {
+				if toolCall.Function.Name != "" && toolCall.Function.Arguments != "" {
+					fmt.Printf("\n[调用工具] %s(%s)\n", toolCall.Function.Name, toolCall.Function.Arguments)
+				}
+			}
 			// 流处理完毕后，打印一个换行符
 			_, _ = fmt.Fprintln(os.Stdout)
 			continue
@@ -341,4 +414,83 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 
 	// 返回累积的所有助手回复内容
 	return builder.String(), nil
+}
+
+// getToolMsg 从流式消息变量中提取完整的工具结果字符串
+func getToolMsg(msg *adk.MessageVariant) string {
+	if msg.IsStreaming && msg.MessageStream != nil {
+		var builder strings.Builder
+		for {
+			chunk, err := msg.MessageStream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				break
+			}
+			if chunk != nil && chunk.Content != "" {
+				builder.WriteString(chunk.Content)
+			}
+		}
+		return builder.String()
+	}
+	if msg.Message != nil {
+		return msg.Message.Content
+	}
+	return ""
+}
+
+// truncate 辅助函数：截断超长字符串，用于控制台预览
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	// 尝试压缩 JSON 格式后再截断
+	var result bytes.Buffer
+	if err := json.Compact(&result, []byte(s)); err == nil {
+		s = result.String()
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func initTools() []tool.BaseTool{
+	var tools []tool.BaseTool
+
+	OperatorQueryTool, err := utils.InferTool(
+		"operator_query",
+		"根据干员名称查询其职业、特长和天赋等基本信息",
+		queryOperator,
+	)
+	if err != nil {
+		log.Print("初始化工具失败:", err)
+	}
+	log.Println("工具 operator_query 初始化成功")
+	tools = append(tools, OperatorQueryTool)
+
+	ResourceQueryTool, err := utils.InferTool(
+		"resource_query",
+		"查询当前的资源状况，包括龙门币、合成玉、理智、源石等",
+		queryResources,
+	)
+	if err != nil {
+		log.Print("初始化工具失败:", err)
+	}
+	log.Println("工具 resource_query 初始化成功")
+	tools = append(tools, ResourceQueryTool)
+
+	BattlePlanTool, err := utils.InferTool(
+		"battle_plan",
+		"根据关卡名称和难度偏好制定作战计划，推荐编队和作战要点",
+		makeBattlePlan,
+	)
+	if err != nil {
+		log.Print("初始化工具失败:", err)
+	}
+	log.Println("工具 battle_plan 初始化成功")
+	tools = append(tools, BattlePlanTool)
+
+	return tools
 }

@@ -28,36 +28,6 @@ type Session struct {
 	filePath string					 // 会话记忆路径
 	mu       sync.Mutex
 	messages []*schema.Message       // 消息列表
-	interruptID string        // 会话中断 ID
-	msgIdx int					// 中断时的消息索引
-}
-
-// SetInterruptID 存储中断 ID，以便 approve 端点可以恢复它
-func (s *Session) SetInterruptID(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.interruptID = id
-}
-
-// GetInterruptID 返回存储的中断 ID，如果没有则返回空字符串
-func (s *Session) GetInterruptID() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.interruptID
-}
-
-// SetMsgIdx 存储中断时的消息索引，以便恢复时可以从该位置继续
-func (s *Session) SetMsgIdx(idx int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.msgIdx = idx
-}
-
-// GetMsgIdx 返回存储的消息索引
-func (s *Session) GetMsgIdx() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.msgIdx
 }
 
 // Append 添加消息到内存并持久化到磁盘
