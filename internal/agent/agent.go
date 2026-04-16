@@ -1,7 +1,9 @@
 package agent
 
 import (
-	"context"
+	"AmiyaAgent/internal/component"
+	"context"我的
+	"strings"
 
 	"github.com/cloudwego/eino-ext/adk/backend/local"
 	"github.com/cloudwego/eino-ext/components/model/openai"
@@ -51,6 +53,19 @@ func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string
 		Backend:        backend, // 注入LocalBackend工具集
 		StreamingShell: backend, // 支持流式 Shell 输出
 		MaxIteration:   50,      // 最大思考/工具调用循环次数
+		// 注册安全工具中间件，用于捕获和处理工具调用错误
+		Handlers: []adk.ChatModelAgentMiddleware{
+			&component.SafeToolMiddleware{},
+		},
+		// 配置模型重试策略，处理速率限制错误
+		ModelRetryConfig: &adk.ModelRetryConfig{
+			MaxRetries: 5,
+			IsRetryAble: func (_ context.Context,err error) bool{
+				return strings.Contains(err.Error(), "429") ||
+					strings.Contains(err.Error(), "Too Many Requests") ||
+					strings.Contains(err.Error(), "qpm limit")
+			},
+		},
 	}
 	agent, err := deep.New(ctx, agentConfig)
 	if err != nil {
