@@ -2,21 +2,81 @@ package agent
 
 import (
 	"AmiyaAgent/internal/component"
-	"context"我的
+	"context"
+	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino-ext/adk/backend/local"
+	clc "github.com/cloudwego/eino-ext/callbacks/cozeloop"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/compose"
+	"github.com/coze-dev/cozeloop-go"
 )
 
-func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string) (adk.Agent, error) {
+func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string,cozeloopApiToken string,cozeloopWorkspaceID string) (adk.Agent, error) {
 	// 创建LocalBackend Tools 后端工具实例
 	backend, err := local.NewBackend(ctx, &local.Config{})
 	if err != nil {
 		return nil, err
+	}
+
+	// handler := callbacks.NewHandlerHelper().
+    // OnStart(func(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
+    //     log.Printf("[trace] %s/%s start", info.Component, info.Name)
+    //     return ctx
+    // }).
+    // OnEnd(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
+    //     log.Printf("[trace] %s/%s end", info.Component, info.Name)
+    //     return ctx
+    // }).
+    // OnError(func(ctx context.Context, info *callbacks.RunInfo, err error) context.Context {
+    //     log.Printf("[trace] %s/%s error: %v", info.Component, info.Name, err)
+    //     return ctx
+    // }).
+    // Handler()
+
+	// // 注册为全局 Callback
+	// callbacks.AppendGlobalHandlers(handler)
+
+	handler := callbacks.NewHandlerBuilder().
+	OnStartFn(func(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
+		log.Printf("[trace] %s/%s start", info.Component, info.Name) 
+		 return ctx 
+	}).
+		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context { 
+			log.Printf("[trace] %s/%s end", info.Component, info.Name) 
+			return ctx 
+	}).
+		OnErrorFn(func(ctx context.Context, info *callbacks.RunInfo, err error) context.Context { 
+			log.Printf("[trace] %s/%s error: %v", info.Component, info.Name, err) 
+			return ctx 
+	}).Build()
+
+	
+	callbacks.AppendGlobalHandlers(handler)
+	
+	// 配制 CozeLoop 追踪
+	if cozeloopApiToken != "" && cozeloopWorkspaceID != "" {
+		client, err := cozeloop.NewClient(
+			cozeloop.WithAPIToken(cozeloopApiToken),
+			cozeloop.WithWorkspaceID(cozeloopWorkspaceID),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("初始化CozeLoop客户端失败: %v", err)
+		}
+		defer func() {
+			time.Sleep(5 * time.Second)
+			client.Close(ctx)
+		}()
+		callbacks.AppendGlobalHandlers(clc.NewLoopHandler(client))
+		log.Println("CozeLoop追踪已启用")
+	} else {
+		log.Println("CozeLoop追踪未启用，缺少API Token或Workspace ID")
 	}
 
 	// 创建自定义工具集
