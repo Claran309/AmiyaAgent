@@ -8,3 +8,5 @@
     - [ ] Arknights Auto
 - [ ] Skills
     - [ ] 方舟相关skill
+- [ ] A2UI
+- [ ] 部署相关
