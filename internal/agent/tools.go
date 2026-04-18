@@ -53,7 +53,13 @@ func InitTools(ctx context.Context, chatModel model.BaseChatModel) []tool.BaseTo
 	}
 	log.Println("工具 rag 初始化成功")
 	tools = append(tools, ragTool)
-	
+
+	webSearchTool, err := graphTool.BuildWebSearchTool(ctx, chatModel)
+	if err != nil {
+		log.Print("初始化联网搜索工具失败:", err)
+	}
+	log.Println("工具 web_search 初始化成功")
+	tools = append(tools, webSearchTool)
 
 	return tools
 }
