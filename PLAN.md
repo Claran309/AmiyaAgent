@@ -4,3 +4,7 @@
 - [ ] 更多Tools
     - [ ] 明日方舟/森空岛脚本相关Tools
 - [ ] .env -> config.yaml
+- [ ] graph Tool
+    - [ ] Arknights Auto
+- [ ] Skills
+    - [ ] 方舟相关skill

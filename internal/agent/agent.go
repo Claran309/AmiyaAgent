@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,13 +14,14 @@ import (
 	clc "github.com/cloudwego/eino-ext/callbacks/cozeloop"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/middlewares/skill"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/compose"
 	"github.com/coze-dev/cozeloop-go"
 )
 
-func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string,cozeloopApiToken string,cozeloopWorkspaceID string) (adk.Agent, error) {
+func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string,cozeloopApiToken string,cozeloopWorkspaceID string, skillDir string) (adk.Agent, error) {
 	// 创建LocalBackend Tools 后端工具实例
 	backend, err := local.NewBackend(ctx, &local.Config{})
 	if err != nil {
@@ -103,6 +106,30 @@ func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string
 	// }
 	// log.Println("ChatModelAgent 实例创建成功")
 
+	// 加载中间件，如果没有Skill文件就不加载相关中间件
+	var handlers []adk.ChatModelAgentMiddleware
+	skillsDir, found := resolveSkillsDir(skillDir)
+	if found {
+		skillBackend, sbErr := skill.NewBackendFromFilesystem(ctx, &skill.BackendFromFilesystemConfig{
+			Backend: backend,
+			BaseDir: skillsDir,
+		})
+		if sbErr != nil {
+			_, _ = fmt.Fprintln(os.Stderr, sbErr)
+			os.Exit(1)
+		}
+		skillMiddleware, smErr := skill.NewMiddleware(ctx, &skill.Config{
+			Backend: skillBackend,
+		})
+		if smErr != nil {
+			_, _ = fmt.Fprintln(os.Stderr, smErr)
+			os.Exit(1)
+		}
+		handlers = append(handlers, skillMiddleware)
+	}
+	// 注册审批中间件和安全工具调用中间件
+	handlers = append(handlers, &component.ApprovalMiddleware{}, &component.SafeToolMiddleware{})
+
 	// 创建DeepAgent类型的Agent实例
 	agentConfig := &deep.Config{
 		Name:           AmiyaName,
@@ -113,11 +140,8 @@ func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string
 		Backend:        backend, // 注入LocalBackend工具集
 		StreamingShell: backend, // 支持流式 Shell 输出
 		MaxIteration:   50,      // 最大思考/工具调用循环次数
-		// 注册安全工具中间件，用于捕获和处理工具调用错误
-		Handlers: []adk.ChatModelAgentMiddleware{
-			&component.ApprovalMiddleware{}, // 处理工具调用中的用户审批流程
-			&component.SafeToolMiddleware{}, // 捕获工具调用错误
-		},
+		// 注册中间件
+		Handlers:       handlers,
 		// 配置模型重试策略，处理速率限制错误
 		ModelRetryConfig: &adk.ModelRetryConfig{
 			MaxRetries: 5,
@@ -134,4 +158,18 @@ func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string
 	}
 
 	return agent, nil
+}
+
+func resolveSkillsDir(skillsDir string) (string, bool) {
+	if skillsDir == "" {
+		return "", false
+	}
+	if absSkillsDir, absErr := filepath.Abs(skillsDir); absErr == nil {
+		skillsDir = absSkillsDir
+	}
+	fi, err := os.Stat(skillsDir)
+	if err != nil || !fi.IsDir() {
+		return "", false
+	}
+	return skillsDir, true
 }

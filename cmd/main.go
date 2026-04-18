@@ -34,8 +34,8 @@ func main() {
 	if err != nil {
 		log.Println("未找到 .env 文件，使用系统环境变量")
 	}
-	apiKey, baseURL, modelName, sessionDir,agentRoot,cozeloopApiToken,cozeloopWorkspaceID := os.Getenv("OPENAI_API_KEY"), os.Getenv("OPENAI_BASE_URL"), os.Getenv("OPENAI_MODEL_NAME"), os.Getenv("SESSION_DIR"), os.Getenv("AGENT_ROOT"), os.Getenv("COZELOOP_API_TOKEN"), os.Getenv("COZELOOP_WORKSPACE_ID")
-	if apiKey == "" || baseURL == "" || modelName == "" || sessionDir == "" || agentRoot == "" || cozeloopApiToken == "" || cozeloopWorkspaceID == "" {
+	apiKey, baseURL, modelName, sessionDir,agentRoot,cozeloopApiToken,cozeloopWorkspaceID,skillDir := os.Getenv("OPENAI_API_KEY"), os.Getenv("OPENAI_BASE_URL"), os.Getenv("OPENAI_MODEL_NAME"), os.Getenv("SESSION_DIR"), os.Getenv("AGENT_ROOT"), os.Getenv("COZELOOP_API_TOKEN"), os.Getenv("COZELOOP_WORKSPACE_ID"), os.Getenv("SKILLS_DIR")
+	if apiKey == "" || baseURL == "" || modelName == "" || sessionDir == "" || agentRoot == "" || cozeloopApiToken == "" || cozeloopWorkspaceID == "" || skillDir == "" {
 		log.Fatal("请设置环境变量")
 	}
 
@@ -52,7 +52,7 @@ func main() {
 	}
 
 	// 创建 DeepAgent 实例
-	agent, err := agent.NewDeepAgent(ctx, chatModel, agentRoot,cozeloopApiToken,cozeloopWorkspaceID)
+	agent, err := agent.NewDeepAgent(ctx, chatModel, agentRoot,cozeloopApiToken,cozeloopWorkspaceID, skillDir)
 	if err != nil {
 		log.Fatal("创建 DeepAgent 实例失败:", err)
 	}
