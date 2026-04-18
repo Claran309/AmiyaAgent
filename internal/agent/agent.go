@@ -80,7 +80,7 @@ func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string
 	}
 
 	// 创建自定义工具集
-	tools := InitTools()
+	tools := InitTools(ctx, model)
 	toolsConfig := adk.ToolsConfig{
 		ToolsNodeConfig: compose.ToolsNodeConfig{
 			Tools: tools,

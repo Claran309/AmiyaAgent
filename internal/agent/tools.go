@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"AmiyaAgent/internal/graphTool"
 	"AmiyaAgent/internal/logic"
+	"context"
 	"log"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-func InitTools() []tool.BaseTool {
+func InitTools(ctx context.Context, chatModel model.BaseChatModel) []tool.BaseTool {
 	var tools []tool.BaseTool
 
 	OperatorQueryTool, err := utils.InferTool(
@@ -43,6 +46,14 @@ func InitTools() []tool.BaseTool {
 	}
 	log.Println("工具 battle_plan 初始化成功")
 	tools = append(tools, BattlePlanTool)
+
+	ragTool, err := graphTool.BuildTool(ctx, chatModel)
+	if err != nil {
+		log.Print("初始化RAG工具失败:", err)
+	}
+	log.Println("工具 rag 初始化成功")
+	tools = append(tools, ragTool)
+	
 
 	return tools
 }
