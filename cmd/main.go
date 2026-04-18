@@ -19,6 +19,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/cloudwego/eino-examples/adk/common/store"
+	commontool "github.com/cloudwego/eino-examples/adk/common/tool"
 )
 
 
@@ -60,6 +62,7 @@ func main() {
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           agent,
 		EnableStreaming: true,
+		CheckPointStore: store.NewInMemoryStore(),
 	})
 	log.Println("AgentRunner 实例创建成功")
 
@@ -98,22 +101,25 @@ func main() {
 
 	//log.Println("")
 
-	scanner := bufio.NewScanner(os.Stdin)
+	checkPointID := sessionID
+	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("博士：")
-		if !scanner.Scan() {
+		line, err := reader.ReadString('\n')
+		if errors.Is(err, io.EOF) {
 			break
 		}
-
-		fmt.Println()
-
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
+		if err != nil {
+			log.Println("读取用户输入失败:", err)
+			continue
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
 
 		// 封装用户消息
-		userMsg := schema.UserMessage(input)
+		userMsg := schema.UserMessage(line)
 		if err := session.Append(userMsg); err != nil { // 将消息保存到会话
 			log.Println("保存用户消息失败:", err)
 			continue
@@ -124,14 +130,23 @@ func main() {
 
 		// 调用 AgentRunner 生成回复
 		fmt.Print("阿米娅：")
-		events := runner.Run(ctx, messages)
-		content, err := getAssistantMsg(events)
+		events := runner.Run(ctx, messages, adk.WithCheckPointID(checkPointID))
+		content,interruptInfo, err := getAssistantMsg(events)
 		if err != nil {
 			log.Println("生成回复失败:", err)
 			// 回滚消息历史
 			messages = messages[:len(messages)-1]
 			continue
 		}
+
+		// 如果 Agent 执行过程中触发了中断，处理中断
+		if interruptInfo != nil {
+			content, err = handleInterrupt(ctx, runner, checkPointID, interruptInfo, reader)
+			if err != nil {
+				_, _ = fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}	
 
 		// 将模型回复加入对话历史
 		err = session.Append(schema.AssistantMessage(content, nil))
@@ -142,17 +157,14 @@ func main() {
 
 		fmt.Println()
 	}
-	if err := scanner.Err(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	
 	fmt.Printf("\n\n会话已保存，会话ID：%s\n", sessionID)
 }
 
-func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error) {
+func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string,*adk.InterruptInfo, error) {
 	// 创建一个字符串构建器，用于累积所有回复内容
 	var builder strings.Builder
+	var interruptInfo *adk.InterruptInfo
 
 	// 循环遍历事件迭代器中的所有事件
 	for {
@@ -164,7 +176,14 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 
 		// 检查事件中是否包含错误
 		if event.Err != nil {
-			return "", event.Err
+			return "", nil, event.Err
+		}
+
+		// 检测中断事件
+		if event.Action != nil && event.Action.Interrupted != nil {
+			interruptInfo = event.Action.Interrupted
+			// 保存中断信息，继续处理其他事件
+			continue
 		}
 
 		// 检查事件的输出是否为空或消息输出为空
@@ -207,7 +226,7 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 
 				// 返回错误
 				if err != nil {
-					return "", err
+					return "", nil, err
 				}
 
 				// 检查帧数据是否有效
@@ -249,7 +268,7 @@ func getAssistantMsg(events *adk.AsyncIterator[*adk.AgentEvent]) (string, error)
 	}
 
 	// 返回累积的所有助手回复内容
-	return builder.String(), nil
+	return builder.String(), interruptInfo, nil
 }
 
 // getToolMsg 从流式消息变量中提取完整的工具结果字符串
@@ -290,4 +309,70 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// handleInterrupt 处理中断并恢复执行
+func handleInterrupt(ctx context.Context, runner *adk.Runner, checkPointID string, interruptInfo *adk.InterruptInfo, reader *bufio.Reader) (string, error) {
+	// 遍历所有中断上下文，找到根本原因的中断
+	for _, ic := range interruptInfo.InterruptContexts {
+		// IsRootCause 标记这是否是触发中断的根本原因
+		// 在多层嵌套的中断中，只有根本原因的中断需要用户处理
+		if !ic.IsRootCause {
+			continue
+		}
+
+		// 尝试将中断信息转换为 ApprovalInfo
+		info, ok := ic.Info.(*commontool.ApprovalInfo)
+		if !ok {
+			continue
+		}
+
+		// 向用户展示需要审批的信息
+		fmt.Printf("\n⚠️  需要用户审批 ⚠️\n")
+		fmt.Printf("工具: %s\n", info.ToolName)
+		fmt.Printf("参数: %s\n", info.ArgumentsInJSON)
+		fmt.Print("\n是否批准? (y/n): ")
+
+		// 读取用户输入
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("读取用户输入失败: %w", err)
+		}
+		response = strings.TrimSpace(strings.ToLower(response))
+
+		// 根据用户输入构建恢复数据
+		var resumeData *commontool.ApprovalResult
+		if response == "y" || response == "yes" {
+			resumeData = &commontool.ApprovalResult{Approved: true}
+			fmt.Println("✓ 已批准，正在执行...")
+		} else {
+			resumeData = &commontool.ApprovalResult{Approved: false}
+			fmt.Println("✗ 已拒绝")
+		}
+
+		// 使用用户的审批决定继续 Agent 执行
+		events, err := runner.ResumeWithParams(ctx, checkPointID, &adk.ResumeParams{
+			Targets: map[string]any{
+				ic.ID: resumeData,  // ic.ID 是中断点的唯一标识
+			},
+		})
+		if err != nil {
+			return "", fmt.Errorf("恢复执行失败: %w", err)
+		}
+
+		// 收集恢复后的输出
+		content, newInterruptInfo, err := getAssistantMsg(events)
+		if err != nil {
+			return "", err
+		}
+
+		// 递归处理新的中断
+		if newInterruptInfo != nil {
+			return handleInterrupt(ctx, runner, checkPointID, newInterruptInfo, reader)
+		}
+
+		return content, nil
+	}
+
+	return "", fmt.Errorf("未找到需要处理的根本原因中断")
 }

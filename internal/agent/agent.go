@@ -115,7 +115,8 @@ func NewDeepAgent(ctx context.Context, model *openai.ChatModel, agentRoot string
 		MaxIteration:   50,      // 最大思考/工具调用循环次数
 		// 注册安全工具中间件，用于捕获和处理工具调用错误
 		Handlers: []adk.ChatModelAgentMiddleware{
-			&component.SafeToolMiddleware{},
+			&component.ApprovalMiddleware{}, // 处理工具调用中的用户审批流程
+			&component.SafeToolMiddleware{}, // 捕获工具调用错误
 		},
 		// 配置模型重试策略，处理速率限制错误
 		ModelRetryConfig: &adk.ModelRetryConfig{

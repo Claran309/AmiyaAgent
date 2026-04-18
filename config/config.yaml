@@ -8,3 +8,7 @@ storage:
 
 agent:
   root: "agent_root_dir"
+
+cozeloop:
+  api_token: "your_cozeloop_api_token"
+  workspace_id: "your_cozeloop_workspace_id"
